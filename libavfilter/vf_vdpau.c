@@ -22,18 +22,27 @@
  * @file vdpau filter.
  */
 
-#include <vdpau/vdpau.h>
+
+#include <dlfcn.h>
+
+#include <vdpau/vdpau_x11.h>
 
 #include "libavutil/avstring.h"
 #include "libavutil/imgutils.h"
 #include "libavutil/opt.h"
 #include "libavutil/pixdesc.h"
+#include "libavcodec/vdpau.h"
 #include "avfilter.h"
 #include "formats.h"
 #include "internal.h"
 #include "video.h"
 
+
 typedef struct {
+    Display *dpy;
+    int screen;
+    VdpDevice vdp_device;
+    VdpGetProcAddress *vdp_get_proc_address;
 } VDPAUContext;
 
 static const AVOption vdpau_options[] = {
@@ -44,6 +53,10 @@ AVFILTER_DEFINE_CLASS(vdpau);
 static av_cold int init(AVFilterContext *ctx)
 {
     VDPAUContext *s = ctx->priv;
+    VdpStatus vdp_st;
+
+    vdp_st = vdp_device_create_x11(s->dpy, s->screen,
+                                   &s->vdp_device, &s->vdp_get_proc_address);
 
     return 0;
 }
