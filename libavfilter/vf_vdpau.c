@@ -60,6 +60,11 @@ static av_cold int init(AVFilterContext *ctx)
 
     vdp_st = vdp_device_create_x11(s->dpy, s->screen,
                                    &s->vdp_device, &s->vdp_get_proc_address);
+    if (vdp_st != VDP_STATUS_OK) {
+        av_log(NULL, loglevel, "VDPAU device creation on X11 display %s failed.\n",
+               display);
+        return AVERROR(EINVAL);
+    }
 
     return 0;
 }
