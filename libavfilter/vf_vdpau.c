@@ -25,7 +25,10 @@
 
 #include <dlfcn.h>
 
+#include <vdpau/vdpau.h>
 #include <vdpau/vdpau_x11.h>
+
+#include <X11/Xlib.h>
 
 #include "libavutil/avstring.h"
 #include "libavutil/imgutils.h"
