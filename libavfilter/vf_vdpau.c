@@ -22,13 +22,12 @@
  * @file vdpau filter.
  */
 
-
-#include <dlfcn.h>
-
 #include <vdpau/vdpau.h>
 #include <vdpau/vdpau_x11.h>
 
 #include <X11/Xlib.h>
+
+#include "ffmpeg.h"
 
 #include "libavutil/avstring.h"
 #include "libavutil/imgutils.h"
@@ -40,12 +39,25 @@
 #include "internal.h"
 #include "video.h"
 
-
 typedef struct {
     Display *dpy;
     int screen;
     VdpDevice vdp_device;
     VdpGetProcAddress *vdp_get_proc_address;
+
+    VdpGetErrorString                               *get_error_string;
+    VdpGetInformationString                         *get_information_string;
+    VdpDeviceDestroy                                *device_destroy;
+#if 1 // for ffmpegs older vdpau API, not the oldest though
+    VdpDecoderCreate                                *decoder_create;
+    VdpDecoderDestroy                               *decoder_destroy;
+    VdpDecoderRender                                *decoder_render;
+#endif
+    VdpVideoSurfaceCreate                           *video_surface_create;
+    VdpVideoSurfaceDestroy                          *video_surface_destroy;
+    VdpVideoSurfaceGetBitsYCbCr                     *video_surface_get_bits;
+    VdpVideoSurfaceGetParameters                    *video_surface_get_parameters;
+    VdpVideoSurfaceQueryGetPutBitsYCbCrCapabilities *video_surface_query;
 } VDPAUContext;
 
 static const AVOption vdpau_options[] = {
@@ -61,15 +73,40 @@ static av_cold int init(AVFilterContext *ctx)
     vdp_st = vdp_device_create_x11(s->dpy, s->screen,
                                    &s->vdp_device, &s->vdp_get_proc_address);
     if (vdp_st != VDP_STATUS_OK) {
-        av_log(NULL, AV_LOG_ERROR, "VDPAU device creation on X11 display %s failed.\n",
+        av_log(ctx, AV_LOG_ERROR, "VDPAU device creation on X11 display %s failed.\n",
                XDisplayString(s->dpy));
         goto fail;
     }
 
+#define GET_CALLBACK(id, result)                                                \
+do {                                                                            \
+    void *tmp;                                                                  \
+    vdp_st = s->vdp_get_proc_address(s->vdp_device, id, &tmp);                  \
+    if (vdp_st != VDP_STATUS_OK) {                                              \
+        av_log(ctx, AV_LOG_ERROR, "Error getting the " #id " callback.\n");    \
+        goto fail;                                                              \
+    }                                                                           \
+    s->result = tmp;                                                            \
+} while (0)
+
+    GET_CALLBACK(VDP_FUNC_ID_GET_ERROR_STRING,               get_error_string);
+    GET_CALLBACK(VDP_FUNC_ID_GET_INFORMATION_STRING,         get_information_string);
+    GET_CALLBACK(VDP_FUNC_ID_DEVICE_DESTROY,                 device_destroy);
+    if (vdpau_api_ver == 1) {
+        GET_CALLBACK(VDP_FUNC_ID_DECODER_CREATE,                 decoder_create);
+        GET_CALLBACK(VDP_FUNC_ID_DECODER_DESTROY,                decoder_destroy);
+        GET_CALLBACK(VDP_FUNC_ID_DECODER_RENDER,                 decoder_render);
+    }
+    GET_CALLBACK(VDP_FUNC_ID_VIDEO_SURFACE_CREATE,           video_surface_create);
+    GET_CALLBACK(VDP_FUNC_ID_VIDEO_SURFACE_DESTROY,          video_surface_destroy);
+    GET_CALLBACK(VDP_FUNC_ID_VIDEO_SURFACE_GET_BITS_Y_CB_CR, video_surface_get_bits);
+    GET_CALLBACK(VDP_FUNC_ID_VIDEO_SURFACE_GET_PARAMETERS,   video_surface_get_parameters);
+    GET_CALLBACK(VDP_FUNC_ID_VIDEO_SURFACE_QUERY_GET_PUT_BITS_Y_CB_CR_CAPABILITIES,
+                 video_surface_query);
     return 0;
 
 fail:
-    av_log(NULL, AV_LOG_ERROR, "VDPAU init failed for stream");
+    av_log(ctx, AV_LOG_ERROR, "VDPAU init failed for stream");
     return AVERROR(EINVAL);
 }
 
