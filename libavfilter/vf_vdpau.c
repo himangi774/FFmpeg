@@ -45,6 +45,7 @@ typedef struct {
     VdpDevice vdp_device;
     VdpGetProcAddress *vdp_get_proc_address;
     VdpYCbCrFormat vdpau_format;
+    AVFrame *frame;
 
     VdpGetErrorString *get_error_string;
     VdpGetInformationString *get_information_string;
@@ -60,6 +61,7 @@ typedef struct {
     VdpOutputSurfaceCreate *output_surface_create;
     VdpOutputSurfaceDestroy *output_surface_destroy;
     VdpOutputSurfacePutBitsIndexed *output_surface_put_bits_indexed;
+    VdpOutputSurfaceGetBitsNative *output_surface_get_bits_native;
     VdpOutputSurfacePutBitsNative *output_surface_put_bits_native;
     VdpOutputSurfaceRenderBitmapSurface *output_surface_render_bitmap_surface;
     VdpOutputSurfaceRenderOutputSurface *output_surface_render_output_surface;
@@ -150,6 +152,7 @@ static av_cold int init(AVFilterContext *ctx)
     GET_CALLBACK(VDP_FUNC_ID_OUTPUT_SURFACE_QUERY_PUT_BITS_Y_CB_CR_CAPABILITIES, output_surface_query_put_bits);
     GET_CALLBACK(VDP_FUNC_ID_OUTPUT_SURFACE_CREATE, output_surface_create);
     GET_CALLBACK(VDP_FUNC_ID_OUTPUT_SURFACE_DESTROY, output_surface_destroy);
+    GET_CALLBACK(VDP_FUNC_ID_OUTPUT_SURFACE_GET_BITS_NATIVE, output_surface_get_bits_native);
     GET_CALLBACK(VDP_FUNC_ID_OUTPUT_SURFACE_PUT_BITS_NATIVE, output_surface_put_bits_native);
     GET_CALLBACK(VDP_FUNC_ID_OUTPUT_SURFACE_PUT_BITS_INDEXED, output_surface_put_bits_indexed);
     GET_CALLBACK(VDP_FUNC_ID_BITMAP_SURFACE_QUERY_CAPABILITIES, bitmap_surface_query_capabilities);
@@ -223,6 +226,11 @@ static int query_formats(AVFilterContext *ctx)
 
 static int config_input(AVFilterLink *inlink)
 {
+    VDPAUContext *s = inlink->dst->priv;
+
+    s->frame = ff_get_video_buffer(inlink, inlink->w, inlink->h);
+    if (!s->frame)
+        return AVERROR(ENOMEM);
     return 0;
 }
 
@@ -233,6 +241,35 @@ static int config_output(AVFilterLink *outlink)
 
 static int filter_frame(AVFilterLink *inlink, AVFrame *inpicref)
 {
+    AVFilterContext *ctx = inlink->dst;
+    VDPAUContext *s = ctx->priv;
+    VdpStatus vdp_st;
+
+    VdpOutputSurface out_surface;
+    vdp_st = s->output_surface_create(s->vdp_device, s->vdpau_format, inpicref->width, inpicref->height, &out_surface);
+    if (vdp_st != VDP_STATUS_OK) {
+        av_log(ctx, AV_LOG_ERROR,
+               "Error creating output surface: %s\n",
+               s->get_error_string(vdp_st));
+        return AVERROR_INVALIDDATA;
+    }
+    const void * const source_data[] = { inpicref->data };
+    uint32_t source_pitches[] = { inpicref->width * inpicref->height };
+    vdp_st = s->output_surface_put_bits_native(out_surface, source_data, source_pitches, NULL);
+    if (vdp_st != VDP_STATUS_OK) {
+        av_log(ctx, AV_LOG_ERROR,
+               "Error copying to vdpau device: %s\n",
+               s->get_error_string(vdp_st));
+        return AVERROR(EIO);
+    }
+    void * const dest_data[] = { s->frame->data };
+    vdp_st = s->output_surface_get_bits_native(out_surface, NULL, dest_data, source_pitches);
+    if (vdp_st != VDP_STATUS_OK) {
+        av_log(ctx, AV_LOG_ERROR,
+               "Error copying from vdpau device: %s\n",
+               s->get_error_string(vdp_st));
+        return AVERROR(EIO);
+    }
     return 0;
 }
 
