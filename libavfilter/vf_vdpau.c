@@ -46,6 +46,7 @@ typedef struct {
     VdpGetProcAddress *vdp_get_proc_address;
     VdpYCbCrFormat vdpau_format;
     AVFrame *frame;
+    VdpVideoMixer vdp_video_mixer;
 
     VdpGetErrorString *get_error_string;
     VdpGetInformationString *get_information_string;
@@ -226,7 +227,27 @@ static int query_formats(AVFilterContext *ctx)
 
 static int config_input(AVFilterLink *inlink)
 {
+
     VDPAUContext *s = inlink->dst->priv;
+
+
+    const static VdpVideoMixerFeature mixer_features[] = {
+        VDP_VIDEO_MIXER_FEATURE_SHARPNESS,
+        VDP_VIDEO_MIXER_FEATURE_NOISE_REDUCTION,
+    };
+    uint32_t feature_count = 2;
+
+    const static VdpVideoMixerParameter mixer_params[] = {
+        VDP_VIDEO_MIXER_PARAMETER_VIDEO_SURFACE_WIDTH,
+        VDP_VIDEO_MIXER_PARAMETER_VIDEO_SURFACE_HEIGHT,
+    };
+
+    uint32_t parameter_count = 2;
+    void const *parameter_values[] = {&inlink->w, &inlink->h};
+
+    s->video_mixer_create(s->vdp_device, feature_count, mixer_features,
+                          parameter_count, mixer_params, parameter_values,
+                          &s->vdp_video_mixer);
 
     s->frame = ff_get_video_buffer(inlink, inlink->w, inlink->h);
     if (!s->frame)
