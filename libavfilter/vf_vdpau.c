@@ -45,8 +45,9 @@ typedef struct {
     VdpDevice vdp_device;
     VdpGetProcAddress *vdp_get_proc_address;
     VdpYCbCrFormat vdpau_format;
-    AVFrame *frame;
+    AVFrame *frame[5];
     VdpVideoMixer vdp_video_mixer;
+    int buffer_cnt;
 
     VdpGetErrorString *get_error_string;
     VdpGetInformationString *get_information_string;
@@ -189,6 +190,7 @@ static av_cold int init(AVFilterContext *ctx)
     GET_CALLBACK(VDP_FUNC_ID_PRESENTATION_QUEUE_QUERY_SURFACE_STATUS, presentation_queue_query_surface_status);
     GET_CALLBACK(VDP_FUNC_ID_PREEMPTION_CALLBACK_REGISTER, preemption_callback_register);
 
+    s->buffer_cnt = 3;
     for (i = 0; i < FF_ARRAY_ELEMS(vdpau_formats); i++) {
         VdpBool supported;
         vdp_st = s->video_surface_query(s->vdp_device, VDP_CHROMA_TYPE_420,
@@ -227,7 +229,7 @@ static int query_formats(AVFilterContext *ctx)
 
 static int config_input(AVFilterLink *inlink)
 {
-
+    int i;
     VDPAUContext *s = inlink->dst->priv;
 
 
@@ -249,9 +251,13 @@ static int config_input(AVFilterLink *inlink)
                           parameter_count, mixer_params, parameter_values,
                           &s->vdp_video_mixer);
 
-    s->frame = ff_get_video_buffer(inlink, inlink->w, inlink->h);
-    if (!s->frame)
-        return AVERROR(ENOMEM);
+
+    for (i = 0; i < s->buffer_cnt; i++) {
+        s->frame[i] = ff_get_video_buffer(inlink, inlink->w, inlink->h);
+        if (!s->frame[i])
+            return AVERROR(ENOMEM);
+    }
+
     return 0;
 }
 
@@ -265,32 +271,59 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *inpicref)
     AVFilterContext *ctx = inlink->dst;
     VDPAUContext *s = ctx->priv;
     VdpStatus vdp_st;
+    int i;
+    VdpVideoSurface input_video_surface;
 
-    VdpOutputSurface out_surface;
-    vdp_st = s->output_surface_create(s->vdp_device, s->vdpau_format, inpicref->width, inpicref->height, &out_surface);
+    /*TODO: check all formats and find the ones supported by the VDPAU device */
+
+    //Use VDP_CHROMA_TYPE_420 for chroma type as libavcodec decodes to it.
+    vdp_st = s->video_surface_create(s->vdp_device, VDP_CHROMA_TYPE_420,
+                                     inpicref->width, inpicref->height,
+                                     &input_video_surface);
     if (vdp_st != VDP_STATUS_OK) {
         av_log(ctx, AV_LOG_ERROR,
-               "Error creating output surface: %s\n",
+               "Error creating input video surface: %s\n",
                s->get_error_string(vdp_st));
         return AVERROR_INVALIDDATA;
     }
-    const void * const source_data[] = { inpicref->data };
+
+    /* Put bits */
+    const void *source_planes[3];
     uint32_t source_pitches[] = { inpicref->width * inpicref->height };
-    vdp_st = s->output_surface_put_bits_native(out_surface, source_data, source_pitches, NULL);
+
+    for (i = 0; i < s->buffer_cnt; i++)
+    {
+        source_planes[i] = s->frame[i]->data;
+    }
+
+    vdp_st = s->video_surface_put_bits_y_cb_cr(input_video_surface,
+                                               VDP_CHROMA_TYPE_420,
+                                               source_planes, source_pitches);
     if (vdp_st != VDP_STATUS_OK) {
         av_log(ctx, AV_LOG_ERROR,
                "Error copying to vdpau device: %s\n",
                s->get_error_string(vdp_st));
         return AVERROR(EIO);
     }
-    void * const dest_data[] = { s->frame->data };
-    vdp_st = s->output_surface_get_bits_native(out_surface, NULL, dest_data, source_pitches);
+
+
+
+    // Get bits.
+    vdp_st = s->video_surface_get_bits(input_video_surface,
+                                       VDP_YCBCR_FORMAT_NV12,
+                                       source_planes, source_pitches);
     if (vdp_st != VDP_STATUS_OK) {
         av_log(ctx, AV_LOG_ERROR,
                "Error copying from vdpau device: %s\n",
                s->get_error_string(vdp_st));
         return AVERROR(EIO);
     }
+
+    for (i = 0; i < s->buffer_cnt - 1; i++)
+        s->frame[i] = s->frame[i+1];
+    s->frame[s->buffer_cnt - 1] = ff_get_video_buffer(inlink, inlink->w, inlink->h);
+    if (!s->frame[s->buffer_cnt - 1])
+        return AVERROR(ENOMEM);
     return 0;
 }
 
