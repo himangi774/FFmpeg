@@ -228,6 +228,8 @@ static int query_formats(AVFilterContext *ctx)
 {
     AVFilterFormats *pix_fmts = NULL;
 
+    ff_add_format(&pix_fmts, AV_PIX_FMT_BGR0);
+
     return ff_set_common_formats(ctx, pix_fmts);
 }
 
@@ -295,13 +297,14 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *inpicref)
     }
 
     /* Put bits */
-    const void *source_planes[3];
-    uint32_t source_pitches[3];
+    const void* source_planes[3] = {s->frame[0]->data, s->frame[1]->data, s->frame[2]->data};
+    uint32_t source_pitches[24];
 
     for (i = 0; i < s->buffer_cnt; i++)
     {
-        source_planes[i] = s->frame[i]->data;
-        source_pitches[i] = s->frame[i]->linesize;
+        for(int j = 0; j < AV_NUM_DATA_POINTERS; j++) {
+            source_pitches[i*AV_NUM_DATA_POINTERS + j] = s->frame[i]->linesize[j];
+        }
     }
 
     vdp_st = s->video_surface_put_bits_y_cb_cr(input_video_surface,
