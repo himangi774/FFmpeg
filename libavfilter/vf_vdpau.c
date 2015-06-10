@@ -102,6 +102,7 @@ typedef struct {
 } VDPAUContext;
 
 static const AVOption vdpau_options[] = {
+    {NULL}
 };
 
 AVFILTER_DEFINE_CLASS(vdpau);
@@ -119,7 +120,10 @@ static av_cold int init(AVFilterContext *ctx)
     VdpStatus vdp_st;
     int i;
 
-    vdp_st = vdp_device_create_x11(s->dpy, s->screen,
+    const char* display_name;
+    display_name = XDisplayName(NULL);
+    s->dpy = XOpenDisplay(display_name);
+    vdp_st = vdp_device_create_x11(s->dpy, XDefaultScreen(s->dpy),
                                    &s->vdp_device, &s->vdp_get_proc_address);
     if (vdp_st != VDP_STATUS_OK) {
         av_log(ctx, AV_LOG_ERROR, "VDPAU device creation on X11 display %s failed.\n",
@@ -206,7 +210,7 @@ static av_cold int init(AVFilterContext *ctx)
     }
 
     if (i == FF_ARRAY_ELEMS(vdpau_formats)) {
-        av_log(NULL, AV_LOG_ERROR,
+        av_log(ctx, AV_LOG_ERROR,
                "Supported VDPAU formats not present.\n");
         return AVERROR(EINVAL);
     }
@@ -231,7 +235,6 @@ static int config_input(AVFilterLink *inlink)
 {
     int i;
     VDPAUContext *s = inlink->dst->priv;
-
 
     const static VdpVideoMixerFeature mixer_features[] = {
         VDP_VIDEO_MIXER_FEATURE_SHARPNESS,
@@ -258,11 +261,15 @@ static int config_input(AVFilterLink *inlink)
             return AVERROR(ENOMEM);
     }
 
+    printf("Input config\n");
+
     return 0;
 }
 
 static int config_output(AVFilterLink *outlink)
 {
+    printf("Output config\n");
+
     return 0;
 }
 
@@ -289,11 +296,12 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *inpicref)
 
     /* Put bits */
     const void *source_planes[3];
-    uint32_t source_pitches[] = { inpicref->width * inpicref->height };
+    uint32_t source_pitches[3];
 
     for (i = 0; i < s->buffer_cnt; i++)
     {
         source_planes[i] = s->frame[i]->data;
+        source_pitches[i] = s->frame[i]->linesize;
     }
 
     vdp_st = s->video_surface_put_bits_y_cb_cr(input_video_surface,
@@ -305,8 +313,6 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *inpicref)
                s->get_error_string(vdp_st));
         return AVERROR(EIO);
     }
-
-
 
     // Get bits.
     vdp_st = s->video_surface_get_bits(input_video_surface,
