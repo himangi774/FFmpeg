@@ -108,10 +108,10 @@ static const AVOption vdpau_options[] = {
 AVFILTER_DEFINE_CLASS(vdpau);
 
 static const int vdpau_formats[][2] = {
-    { VDP_YCBCR_FORMAT_YV12, AV_PIX_FMT_YUV420P },
+    //{ VDP_YCBCR_FORMAT_YV12, AV_PIX_FMT_YUV420P },
     { VDP_YCBCR_FORMAT_NV12, AV_PIX_FMT_NV12 },
-    { VDP_YCBCR_FORMAT_YUYV, AV_PIX_FMT_YUYV422 },
-    { VDP_YCBCR_FORMAT_UYVY, AV_PIX_FMT_UYVY422 },
+    //{ VDP_YCBCR_FORMAT_YUYV, AV_PIX_FMT_YUYV422 },
+    //{ VDP_YCBCR_FORMAT_UYVY, AV_PIX_FMT_UYVY422 },
 };
 
 static av_cold int init(AVFilterContext *ctx)
@@ -229,6 +229,7 @@ static int query_formats(AVFilterContext *ctx)
     AVFilterFormats *pix_fmts = NULL;
 
     ff_add_format(&pix_fmts, AV_PIX_FMT_BGR0);
+    ff_add_format(&pix_fmts, AV_PIX_FMT_NV12);
 
     return ff_set_common_formats(ctx, pix_fmts);
 }
@@ -297,15 +298,8 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *inpicref)
     }
 
     /* Put bits */
-    const void* source_planes[3] = {s->frame[0]->data, s->frame[1]->data, s->frame[2]->data};
-    uint32_t source_pitches[24];
-
-    for (i = 0; i < s->buffer_cnt; i++)
-    {
-        for(int j = 0; j < AV_NUM_DATA_POINTERS; j++) {
-            source_pitches[i*AV_NUM_DATA_POINTERS + j] = s->frame[i]->linesize[j];
-        }
-    }
+    const void* source_planes[3] = { s->frame[0]->data[0], s->frame[0]->data[1], s->frame[0]->data[2] };
+    uint32_t source_pitches[3] =  { s->frame[0]->linesize[0], s->frame[0]->linesize[1], s->frame[0]->linesize[2] };
 
     vdp_st = s->video_surface_put_bits_y_cb_cr(input_video_surface,
                                                VDP_CHROMA_TYPE_420,
